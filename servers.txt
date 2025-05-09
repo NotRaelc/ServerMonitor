@@ -1,0 +1,7 @@
+pug1.war-lords.net:27020
+pug2.war-lords.net:27021
+pug3.war-lords.net:27022
+pug1eu.war-lords.net:27016
+193.31.28.17:27015
+193.31.28.17:27035
+31.58.91.239:27015
