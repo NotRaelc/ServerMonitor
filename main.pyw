@@ -2,18 +2,34 @@ import a2s
 import tkinter as tk
 from tkinter import ttk, messagebox
 import os
-import threading
-from queue import Queue
+import asyncio
 import webbrowser
 from datetime import datetime
 import socket
 import pyperclip
 import json
 from pathlib import Path
+from functools import partial
 
 LOCALE_DIR = Path(__file__).parent / 'locales'
 CONFIG_FILE = Path(__file__).parent / 'config.json'
 DEFAULT_LANGUAGE = 'ru_RU'
+
+class AsyncTk(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.running = True
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.tasks = []
+
+    async def async_loop(self):
+        while self.running:
+            self.update()
+            await asyncio.sleep(0.05)
+
+    def close(self):
+        self.running = False
+        self.destroy()
 
 class Localization:
     def __init__(self):
@@ -59,18 +75,14 @@ class ServerMonitorApp:
         self.root.title(tr("server_monitor"))
         self.server_list = []
         self.update_interval = 30
-        self.queue = Queue()
         self.last_update = None
         self.selected_server_data = None
-        self.is_updating = False
-        self.update_id = None
         self.server_items = {}
-        self.completed_requests = 0
+        self.update_task = None
         
         self.setup_ui()
         self.load_servers()
         self.initial_populate()
-        self.process_queue()
         self.setup_keybindings()
 
     def setup_ui(self):
@@ -112,7 +124,7 @@ class ServerMonitorApp:
             (tr("add_server"), self.add_server_dialog),
             (tr("refresh_now"), self.force_update),
             (tr("settings"), self.settings_dialog),
-            (tr("exit"), self.root.quit)
+            (tr("exit"), self.root.close)
         ]
         
         for text, command in buttons:
@@ -136,13 +148,71 @@ class ServerMonitorApp:
                 '...'
             ))
             self.server_items[srv] = item_id
-        self.update_data()
+        self.force_update()
 
-    def schedule_update(self):
-        if self.update_id:
-            self.root.after_cancel(self.update_id)
-        if self.update_interval > 0:
-            self.update_id = self.root.after(self.update_interval * 1000, self.update_data)
+    async def fetch_server_data(self, server):
+        try:
+            address, port = server.split(':')
+            info = await a2s.ainfo((address, int(port)), timeout=3)
+            return {
+                'server': info.server_name,
+                'online': f"{info.player_count}/{info.max_players}",
+                'map': info.map_name,
+                'platform': f"{info.app_id}, {info.version}",
+                'ping': f"{info.ping*1000:.0f} ms"
+            }
+        except Exception as e:
+            return {
+                'server': tr("connection_error"),
+                'online': 'N/A',
+                'map': 'N/A',
+                'platform': 'N/A',
+                'ping': 'N/A'
+            }
+
+    async def update_servers(self):
+        self.last_update = datetime.now()
+        self.update_status()
+        
+        tasks = []
+        for srv in self.server_list:
+            task = asyncio.create_task(self.fetch_server_data(srv))
+            tasks.append((srv, task))
+        
+        for srv, task in tasks:
+            try:
+                result = await task
+                if srv in self.server_items:
+                    self.root.after(0, self.update_server_row, srv, result)
+            except Exception as e:
+                print(f"Error updating {srv}: {e}")
+
+        self.schedule_next_update()
+
+    def update_server_row(self, srv, result):
+        item_id = self.server_items[srv]
+        self.tree.item(item_id, values=(
+            result['server'],
+            result['online'],
+            srv,
+            result['map'],
+            result['platform'],
+            result['ping']
+        ))
+
+    def schedule_next_update(self):
+        if self.update_task and not self.update_task.done():
+            self.update_task.cancel()
+        self.update_task = asyncio.create_task(self.delayed_update())
+
+    async def delayed_update(self):
+        await asyncio.sleep(self.update_interval)
+        await self.update_servers()
+
+    def force_update(self):
+        if self.update_task and not self.update_task.done():
+            self.update_task.cancel()
+        asyncio.create_task(self.update_servers())
 
     def setup_keybindings(self):
         self.root.bind_all("<Control-a>", self.select_all)
@@ -274,90 +344,6 @@ class ServerMonitorApp:
         with open('servers.txt', 'w') as f:
             f.write('\n'.join(self.server_list))
 
-    def fetch_data(self, server):
-        try:
-            address, port = server.split(':')
-            info = a2s.info((address, int(port)), timeout=3)
-            platform_info = f"{info.app_id}, {info.version}"
-            return {
-                'server': info.server_name,
-                'online': f"{info.player_count}/{info.max_players}",
-                'map': info.map_name,
-                'platform': platform_info,
-                'ping': f"{info.ping*1000:.0f} ms"
-            }
-        except Exception as e:
-            return {
-                'server': tr("connection_error"),
-                'online': 'N/A',
-                'map': 'N/A',
-                'platform': 'N/A',
-                'ping': 'N/A'
-            }
-
-    def force_update(self):
-        if self.update_id:
-            self.root.after_cancel(self.update_id)
-        self.update_data()
-
-    def update_data(self):
-        if self.is_updating:
-            return
-            
-        self.is_updating = True
-        self.completed_requests = 0
-        self.last_update = datetime.now()
-        self.update_status()
-        
-        while not self.queue.empty():
-            self.queue.get()
-        
-        for srv in self.server_items:
-            self.tree.item(self.server_items[srv], values=(
-                tr("loading"),
-                '...',
-                srv,
-                '...',
-                '...',
-                '...'
-            ))
-
-        def worker(srv):
-            try:
-                result = self.fetch_data(srv)
-                self.queue.put((srv, result))
-            except Exception as e:
-                self.queue.put((srv, None))
-            finally:
-                self.completed_requests += 1
-
-        for srv in self.server_list:
-            threading.Thread(target=worker, args=(srv,), daemon=True).start()
-        
-        self.root.after(100, self.check_update_completion)
-
-    def check_update_completion(self):
-        if self.completed_requests < len(self.server_list):
-            self.root.after(100, self.check_update_completion)
-        else:
-            self.is_updating = False
-            self.schedule_update()
-
-    def process_queue(self):
-        while not self.queue.empty():
-            srv, result = self.queue.get()
-            if srv in self.server_items and result:
-                item_id = self.server_items[srv]
-                self.tree.item(item_id, values=(
-                    result['server'],
-                    result['online'],
-                    srv,
-                    result['map'],
-                    result['platform'],
-                    result['ping']
-                ))
-        self.root.after(100, self.process_queue)
-
     def settings_dialog(self):
         dialog = tk.Toplevel(self.root)
         dialog.title(tr("settings"))
@@ -380,12 +366,15 @@ class ServerMonitorApp:
             if new_interval < 1:
                 raise ValueError
             self.update_interval = new_interval
-            self.schedule_update()
+            self.schedule_next_update()
             dialog.destroy()
         except ValueError:
             messagebox.showerror(tr("error"), tr("invalid_number"))
 
-if __name__ == "__main__":
-    root = tk.Tk()
+async def main():
+    root = AsyncTk()
     app = ServerMonitorApp(root)
-    root.mainloop()
+    await root.async_loop()
+
+if __name__ == "__main__":
+    asyncio.run(main())
