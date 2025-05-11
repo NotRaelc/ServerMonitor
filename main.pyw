@@ -10,6 +10,7 @@ import pyperclip
 import json
 from pathlib import Path
 from functools import partial
+from collections import OrderedDict
 
 LOCALE_DIR = Path(__file__).parent / 'locales'
 CONFIG_FILE = Path(__file__).parent / 'config.json'
@@ -114,6 +115,11 @@ class ServerMonitorApp:
         self.context_menu.add_command(label=tr("copy_ip"), command=self.copy_ip)
         self.context_menu.add_command(label=tr("connect"), command=self.connect_to_selected)
         self.context_menu.add_command(label=tr("delete_server"), command=self.delete_server)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label=tr("commands"), command=lambda: asyncio.create_task(self.show_rules()))
+        self.context_menu.add_command(label=tr("players"), command=lambda: asyncio.create_task(self.show_players()))
+        self.context_menu.add_command(label=tr("extra_info"), command=lambda: asyncio.create_task(self.show_extra_info()))
+        
         self.tree.bind("<Button-3>", self.show_context_menu)
         self.tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
@@ -213,6 +219,99 @@ class ServerMonitorApp:
         if self.update_task and not self.update_task.done():
             self.update_task.cancel()
         asyncio.create_task(self.update_servers())
+
+    def create_data_window(self, title, columns, data):
+        window = tk.Toplevel(self.root)
+        window.title(title)
+        window.geometry("800x600")
+        
+        frame = ttk.Frame(window)
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        tree = ttk.Treeview(frame, columns=columns, show='headings')
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        hsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=150, anchor='w')
+        
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        for item in data:
+            tree.insert('', 'end', values=item)
+        
+        ttk.Button(window, text=tr("close"), command=window.destroy).pack(pady=5)
+
+    def format_duration(self, seconds):
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{int(seconds)}"
+
+    async def show_rules(self):
+        if not self.selected_server_data:
+            return
+        
+        server_str = self.selected_server_data[2]
+        try:
+            address, port = server_str.split(':')
+            rules = await a2s.arules((address, int(port)), timeout=3)
+            sorted_rules = OrderedDict(sorted(rules.items()))
+            data = [(k, str(v)) for k, v in sorted_rules.items()]
+            self.root.after(0, self.create_data_window, 
+                          f"{tr('rules_for')} {server_str}", 
+                          [tr('key'), tr('value')], 
+                          data)
+        except Exception as e:
+            messagebox.showerror(tr("error"), f"{tr('connection_error')}:\n{str(e)}")
+
+    async def show_players(self):
+        if not self.selected_server_data:
+            return
+        
+        server_str = self.selected_server_data[2]
+        try:
+            address, port = server_str.split(':')
+            players = await a2s.aplayers((address, int(port)), timeout=5)
+            data = []
+            for player in players:
+                if player.name:
+                    duration = self.format_duration(player.duration)
+                    data.append((player.name, str(player.score), duration))
+            self.root.after(0, self.create_data_window,
+                          f"{tr('players_on')} {server_str}",
+                          [tr('name'), tr('score'), tr('duration')],
+                          data)
+        except Exception as e:
+            messagebox.showerror(tr("error"), f"{tr('connection_error')}:\n{str(e)}")
+
+    async def show_extra_info(self):
+        if not self.selected_server_data:
+            return
+        
+        server_str = self.selected_server_data[2]
+        try:
+            address, port = server_str.split(':')
+            info = await a2s.ainfo((address, int(port)), timeout=3)
+            exclude_fields = {'server_name', 'player_count', 'max_players', 
+                             'map_name', 'app_id', 'version', 'ping'}
+            extra_info = []
+            
+            for field in dir(info):
+                if not field.startswith('_') and field not in exclude_fields:
+                    value = getattr(info, field)
+                    if value is not None:
+                        extra_info.append((tr(field), str(value)))
+            
+            self.root.after(0, self.create_data_window,
+                          f"{tr('extra_info_for')} {server_str}",
+                          [tr('parameter'), tr('value')],
+                          sorted(extra_info))
+        except Exception as e:
+            messagebox.showerror(tr("error"), f"{tr('connection_error')}:\n{str(e)}")
 
     def setup_keybindings(self):
         self.root.bind_all("<Control-a>", self.select_all)
