@@ -9,7 +9,6 @@ import socket
 import pyperclip
 import json
 from pathlib import Path
-from functools import partial
 from collections import OrderedDict
 
 LOCALE_DIR = Path(__file__).parent / 'locales'
@@ -21,7 +20,6 @@ class AsyncTk(tk.Tk):
         super().__init__()
         self.running = True
         self.protocol("WM_DELETE_WINDOW", self.close)
-        self.tasks = []
 
     async def async_loop(self):
         while self.running:
@@ -80,6 +78,9 @@ class ServerMonitorApp:
         self.selected_server_data = None
         self.server_items = {}
         self.update_task = None
+        self.players_data = {}
+        self.server_info_data = {}
+        self.rules_data = {}
         
         self.setup_ui()
         self.load_servers()
@@ -156,42 +157,64 @@ class ServerMonitorApp:
             self.server_items[srv] = item_id
         self.force_update()
 
-    async def fetch_server_data(self, server):
+    async def fetch_all_data(self, server):
         try:
             address, port = server.split(':')
-            info = await a2s.ainfo((address, int(port)), timeout=3)
+            address_tuple = (address, int(port))
+            
+            info, players, rules = await asyncio.gather(
+                a2s.ainfo(address_tuple, timeout=3),
+                a2s.aplayers(address_tuple, timeout=5),
+                a2s.arules(address_tuple, timeout=3)
+            )
+            
             return {
-                'server': info.server_name,
-                'online': f"{info.player_count}/{info.max_players}",
-                'map': info.map_name,
-                'platform': f"{info.app_id}, {info.version}",
-                'ping': f"{info.ping*1000:.0f} ms"
+                'server': server,
+                'base_info': {
+                    'server': info.server_name,
+                    'online': f"{info.player_count}/{info.max_players}",
+                    'map': info.map_name,
+                    'platform': f"{info.app_id}, {info.version}",
+                    'ping': f"{info.ping*1000:.0f} ms"
+                },
+                'players': players,
+                'rules': rules,
+                'full_info': info
             }
         except Exception as e:
+            print(f"Error fetching data for {server}: {e}")
             return {
-                'server': tr("connection_error"),
-                'online': 'N/A',
-                'map': 'N/A',
-                'platform': 'N/A',
-                'ping': 'N/A'
+                'server': server,
+                'base_info': {
+                    'server': tr("connection_error"),
+                    'online': 'N/A',
+                    'map': 'N/A',
+                    'platform': 'N/A',
+                    'ping': 'N/A'
+                },
+                'players': [],
+                'rules': {},
+                'full_info': None
             }
 
     async def update_servers(self):
         self.last_update = datetime.now()
         self.update_status()
         
-        tasks = []
-        for srv in self.server_list:
-            task = asyncio.create_task(self.fetch_server_data(srv))
-            tasks.append((srv, task))
+        self.players_data.clear()
+        self.rules_data.clear()
+        self.server_info_data.clear()
         
-        for srv, task in tasks:
-            try:
-                result = await task
-                if srv in self.server_items:
-                    self.root.after(0, self.update_server_row, srv, result)
-            except Exception as e:
-                print(f"Error updating {srv}: {e}")
+        tasks = [asyncio.create_task(self.fetch_all_data(srv)) for srv in self.server_list]
+        
+        for task in asyncio.as_completed(tasks):
+            data = await task
+            srv = data['server']
+            if srv in self.server_items:
+                self.root.after(0, self.update_server_row, srv, data['base_info'])
+                self.players_data[srv] = data['players']
+                self.rules_data[srv] = data['rules']
+                self.server_info_data[srv] = data['full_info']
 
         self.schedule_next_update()
 
@@ -247,71 +270,65 @@ class ServerMonitorApp:
         ttk.Button(window, text=tr("close"), command=window.destroy).pack(pady=5)
 
     def format_duration(self, seconds):
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        return f"{int(seconds)}"
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        return f"{hours:02}:{minutes:02}"
 
     async def show_rules(self):
         if not self.selected_server_data:
             return
         
         server_str = self.selected_server_data[2]
-        try:
-            address, port = server_str.split(':')
-            rules = await a2s.arules((address, int(port)), timeout=3)
-            sorted_rules = OrderedDict(sorted(rules.items()))
-            data = [(k, str(v)) for k, v in sorted_rules.items()]
-            self.root.after(0, self.create_data_window, 
-                          f"{tr('rules_for')} {server_str}", 
-                          [tr('key'), tr('value')], 
-                          data)
-        except Exception as e:
-            messagebox.showerror(tr("error"), f"{tr('connection_error')}:\n{str(e)}")
+        rules = self.rules_data.get(server_str, {})
+        
+        sorted_rules = OrderedDict(sorted(rules.items()))
+        data = [(k, str(v)) for k, v in sorted_rules.items()]
+        self.root.after(0, self.create_data_window, 
+                      f"{tr('rules_for')} {server_str}", 
+                      [tr('key'), tr('value')], 
+                      data)
 
     async def show_players(self):
         if not self.selected_server_data:
             return
         
         server_str = self.selected_server_data[2]
-        try:
-            address, port = server_str.split(':')
-            players = await a2s.aplayers((address, int(port)), timeout=5)
-            data = []
-            for player in players:
-                if player.name:
-                    duration = self.format_duration(player.duration)
-                    data.append((player.name, str(player.score), duration))
-            self.root.after(0, self.create_data_window,
-                          f"{tr('players_on')} {server_str}",
-                          [tr('name'), tr('score'), tr('duration')],
-                          data)
-        except Exception as e:
-            messagebox.showerror(tr("error"), f"{tr('connection_error')}:\n{str(e)}")
+        players = self.players_data.get(server_str, [])
+        
+        data = []
+        for player in players:
+            if isinstance(player, a2s.Player) and player.name:
+                duration = self.format_duration(player.duration)
+                data.append((player.name, str(player.score), duration))
+        
+        self.root.after(0, self.create_data_window,
+                      f"{tr('players_on')} {server_str}",
+                      [tr('name'), tr('score'), tr('duration')],
+                      data)
 
     async def show_extra_info(self):
         if not self.selected_server_data:
             return
         
         server_str = self.selected_server_data[2]
-        try:
-            address, port = server_str.split(':')
-            info = await a2s.ainfo((address, int(port)), timeout=3)
-            exclude_fields = {'server_name', 'player_count', 'max_players', 
-                             'map_name', 'app_id', 'version', 'ping'}
-            extra_info = []
-            
-            for field in dir(info):
-                if not field.startswith('_') and field not in exclude_fields:
-                    value = getattr(info, field)
-                    if value is not None:
-                        extra_info.append((tr(field), str(value)))
-            
-            self.root.after(0, self.create_data_window,
-                          f"{tr('extra_info_for')} {server_str}",
-                          [tr('parameter'), tr('value')],
-                          sorted(extra_info))
-        except Exception as e:
-            messagebox.showerror(tr("error"), f"{tr('connection_error')}:\n{str(e)}")
+        info = self.server_info_data.get(server_str)
+        if not info:
+            return
+        
+        exclude_fields = {'server_name', 'player_count', 'max_players', 
+                         'map_name', 'app_id', 'version', 'ping'}
+        extra_info = []
+        
+        for field in dir(info):
+            if not field.startswith('_') and field not in exclude_fields:
+                value = getattr(info, field)
+                if value is not None:
+                    extra_info.append((tr(field), str(value)))
+        
+        self.root.after(0, self.create_data_window,
+                      f"{tr('extra_info_for')} {server_str}",
+                      [tr('parameter'), tr('value')],
+                      sorted(extra_info))
 
     def setup_keybindings(self):
         self.root.bind_all("<Control-a>", self.select_all)
