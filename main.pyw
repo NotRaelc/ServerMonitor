@@ -1,7 +1,6 @@
 import a2s
 import tkinter as tk
 from tkinter import ttk, messagebox
-import os
 import asyncio
 import webbrowser
 from datetime import datetime
@@ -14,6 +13,16 @@ from collections import OrderedDict
 LOCALE_DIR = Path(__file__).parent / 'locales'
 CONFIG_FILE = Path(__file__).parent / 'config.json'
 DEFAULT_LANGUAGE = 'ru_RU'
+DEFAULT_UPDATE_INTERVAL = 30
+DEFAULT_SERVERS = [
+    'pug1.war-lords.net:27020',
+    'pug2.war-lords.net:27021',
+    'pug3.war-lords.net:27022',
+    'pug1eu.war-lords.net:27016',
+    '193.31.28.17:27015',
+    '193.31.28.17:27035',
+    '31.58.91.239:27015'
+]
 
 class AsyncTk(tk.Tk):
     def __init__(self):
@@ -25,32 +34,69 @@ class AsyncTk(tk.Tk):
         while self.running:
             self.update()
             await asyncio.sleep(0.05)
-
+    
     def close(self):
         self.running = False
         self.destroy()
 
-class Localization:
+class ConfigManager:
     def __init__(self):
-        self.language = DEFAULT_LANGUAGE
+        self.config = {
+            'language': DEFAULT_LANGUAGE,
+            'update_interval': DEFAULT_UPDATE_INTERVAL,
+            'servers': DEFAULT_SERVERS.copy()
+        }
         self.load_config()
-        self.strings = self.load_language(self.language)
 
     def load_config(self):
         try:
             if CONFIG_FILE.exists():
                 with open(CONFIG_FILE, 'r') as f:
-                    config = json.load(f)
-                    self.language = config.get('language', DEFAULT_LANGUAGE)
+                    loaded_config = json.load(f)
+                    self.config.update({
+                        'language': loaded_config.get('language', DEFAULT_LANGUAGE),
+                        'update_interval': loaded_config.get('update_interval', DEFAULT_UPDATE_INTERVAL),
+                        'servers': loaded_config.get('servers', DEFAULT_SERVERS.copy())
+                    })
         except Exception as e:
             print(f"Config load error: {e}")
+            self.save_config()
 
     def save_config(self):
         try:
             with open(CONFIG_FILE, 'w') as f:
-                json.dump({'language': self.language}, f)
+                json.dump(self.config, f, indent=2)
         except Exception as e:
             print(f"Config save error: {e}")
+
+    @property
+    def language(self):
+        return self.config['language']
+    
+    @language.setter
+    def language(self, value):
+        self.config['language'] = value
+    
+    @property
+    def update_interval(self):
+        return self.config['update_interval']
+    
+    @update_interval.setter
+    def update_interval(self, value):
+        self.config['update_interval'] = value
+    
+    @property
+    def servers(self):
+        return self.config['servers']
+    
+    @servers.setter
+    def servers(self, value):
+        self.config['servers'] = value
+
+class Localization:
+    def __init__(self, config):
+        self.config = config
+        self.strings = self.load_language(self.config.language)
 
     def load_language(self, lang_code):
         try:
@@ -60,7 +106,8 @@ class Localization:
             print(f"Language load error: {e}")
             return {}
 
-localization = Localization()
+config_manager = ConfigManager()
+localization = Localization(config_manager)
 
 def tr(key):
     return localization.strings.get(key, key)
@@ -72,8 +119,8 @@ class ServerMonitorApp:
     def __init__(self, root):
         self.root = root
         self.root.title(tr("server_monitor"))
-        self.server_list = []
-        self.update_interval = 30
+        self.server_list = config_manager.servers.copy()
+        self.update_interval = config_manager.update_interval
         self.last_update = None
         self.selected_server_data = None
         self.server_items = {}
@@ -83,7 +130,6 @@ class ServerMonitorApp:
         self.rules_data = {}
         
         self.setup_ui()
-        self.load_servers()
         self.initial_populate()
         self.setup_keybindings()
 
@@ -354,9 +400,9 @@ class ServerMonitorApp:
             return "break"
 
     def change_language(self, lang_code):
-        localization.language = lang_code
+        config_manager.language = lang_code
+        config_manager.save_config()
         localization.strings = localization.load_language(lang_code)
-        localization.save_config()
         self.reload_ui()
 
     def reload_ui(self):
@@ -438,27 +484,9 @@ class ServerMonitorApp:
         else:
             self.update_label.config(text=tr("last_update_never"))
 
-    def load_servers(self):
-        filename = 'servers.txt'
-        if not os.path.exists(filename):
-            default_servers = [
-                'pug1.war-lords.net:27020',
-                'pug2.war-lords.net:27021',
-                'pug3.war-lords.net:27022',
-                'pug1eu.war-lords.net:27016',
-                '193.31.28.17:27015',
-                '193.31.28.17:27035',
-                '31.58.91.239:27015'
-            ]
-            with open(filename, 'w') as f:
-                f.write('\n'.join(default_servers))
-        
-        with open(filename, 'r') as f:
-            self.server_list = [line.strip() for line in f if line.strip()]
-
     def save_servers(self):
-        with open('servers.txt', 'w') as f:
-            f.write('\n'.join(self.server_list))
+        config_manager.servers = self.server_list.copy()
+        config_manager.save_config()
 
     def settings_dialog(self):
         dialog = tk.Toplevel(self.root)
@@ -482,6 +510,8 @@ class ServerMonitorApp:
             if new_interval < 1:
                 raise ValueError
             self.update_interval = new_interval
+            config_manager.update_interval = new_interval
+            config_manager.save_config()
             self.schedule_next_update()
             dialog.destroy()
         except ValueError:
