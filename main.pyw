@@ -64,10 +64,12 @@ class ServerMonitorApp:
         self.selected_server_data = None
         self.is_updating = False
         self.update_id = None
+        self.server_items = {}
+        self.completed_requests = 0
         
         self.setup_ui()
         self.load_servers()
-        self.update_data()
+        self.initial_populate()
         self.process_queue()
         self.setup_keybindings()
 
@@ -87,7 +89,7 @@ class ServerMonitorApp:
             ('Online', tr("online"), 80),
             ('IP:Port', tr("ip_port"), 120),
             ('Map', tr("map"), 120),
-            ('Platform', tr("platform"), 120),
+            ('Platform', tr("platform"), 150),
             ('Ping', tr("ping"), 60)
         ]
         
@@ -108,7 +110,7 @@ class ServerMonitorApp:
 
         buttons = [
             (tr("add_server"), self.add_server_dialog),
-            (tr("refresh_now"), self.update_data),
+            (tr("refresh_now"), self.force_update),
             (tr("settings"), self.settings_dialog),
             (tr("exit"), self.root.quit)
         ]
@@ -120,6 +122,27 @@ class ServerMonitorApp:
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
         self.update_label = ttk.Label(self.status_bar, text=tr("last_update_never"), anchor='e')
         self.update_label.pack(side=tk.RIGHT, padx=5)
+
+    def initial_populate(self):
+        self.tree.delete(*self.tree.get_children())
+        self.server_items.clear()
+        for srv in self.server_list:
+            item_id = self.tree.insert('', 'end', values=(
+                tr("loading"),
+                '...',
+                srv,
+                '...',
+                '...',
+                '...'
+            ))
+            self.server_items[srv] = item_id
+        self.update_data()
+
+    def schedule_update(self):
+        if self.update_id:
+            self.root.after_cancel(self.update_id)
+        if self.update_interval > 0:
+            self.update_id = self.root.after(self.update_interval * 1000, self.update_data)
 
     def setup_keybindings(self):
         self.root.bind_all("<Control-a>", self.select_all)
@@ -154,13 +177,7 @@ class ServerMonitorApp:
         for widget in self.root.winfo_children():
             widget.destroy()
         self.setup_ui()
-        self.update_treeview_on_reload()
-
-    def update_treeview_on_reload(self):
-        if self.last_update:
-            self.update_status()
-            data = [self.fetch_data(srv) for srv in self.server_list]
-            self.update_treeview(data)
+        self.initial_populate()
 
     def show_context_menu(self, event):
         item = self.tree.identify_row(event.y)
@@ -175,7 +192,7 @@ class ServerMonitorApp:
     def connect_to_selected(self):
         if self.selected_server_data:
             ip_port = self.selected_server_data[2]
-            version = self.selected_server_data[4]
+            version = self.selected_server_data[4].split(', ')[-1] if self.selected_server_data[4] != 'N/A' else ''
             self.connect_to_server(ip_port, version)
 
     def connect_to_server(self, server_str, version):
@@ -194,7 +211,7 @@ class ServerMonitorApp:
             if server in self.server_list:
                 self.server_list.remove(server)
                 self.save_servers()
-                self.update_data()
+                self.initial_populate()
 
     def add_server_dialog(self):
         dialog = tk.Toplevel(self.root)
@@ -226,7 +243,7 @@ class ServerMonitorApp:
             
         self.server_list.append(server)
         self.save_servers()
-        self.update_data()
+        self.initial_populate()
 
     def update_status(self):
         if self.last_update:
@@ -261,44 +278,84 @@ class ServerMonitorApp:
         try:
             address, port = server.split(':')
             info = a2s.info((address, int(port)), timeout=3)
-            return [
-                info.server_name,
-                f"{info.player_count}/{info.max_players}",
-                server,
-                info.map_name,
-                info.version,
-                f"{info.ping*1000:.0f} ms"
-            ]
+            platform_info = f"{info.app_id}, {info.version}"
+            return {
+                'server': info.server_name,
+                'online': f"{info.player_count}/{info.max_players}",
+                'map': info.map_name,
+                'platform': platform_info,
+                'ping': f"{info.ping*1000:.0f} ms"
+            }
         except Exception as e:
-            return [tr("connection_error"), 'N/A', server, 'N/A', 'N/A', 'N/A']
+            return {
+                'server': tr("connection_error"),
+                'online': 'N/A',
+                'map': 'N/A',
+                'platform': 'N/A',
+                'ping': 'N/A'
+            }
+
+    def force_update(self):
+        if self.update_id:
+            self.root.after_cancel(self.update_id)
+        self.update_data()
 
     def update_data(self):
         if self.is_updating:
             return
             
         self.is_updating = True
-        
-        def worker():
-            try:
-                results = [self.fetch_data(srv) for srv in self.server_list]
-                self.queue.put(lambda: self.update_treeview(results))
-            finally:
-                self.is_updating = False
-                if self.update_interval > 0:
-                    self.update_id = self.root.after(self.update_interval * 1000, self.update_data)
-        
-        threading.Thread(target=worker, daemon=True).start()
-
-    def update_treeview(self, data):
-        self.tree.delete(*self.tree.get_children())
-        for item in data:
-            self.tree.insert('', 'end', values=item)
+        self.completed_requests = 0
         self.last_update = datetime.now()
         self.update_status()
+        
+        while not self.queue.empty():
+            self.queue.get()
+        
+        for srv in self.server_items:
+            self.tree.item(self.server_items[srv], values=(
+                tr("loading"),
+                '...',
+                srv,
+                '...',
+                '...',
+                '...'
+            ))
+
+        def worker(srv):
+            try:
+                result = self.fetch_data(srv)
+                self.queue.put((srv, result))
+            except Exception as e:
+                self.queue.put((srv, None))
+            finally:
+                self.completed_requests += 1
+
+        for srv in self.server_list:
+            threading.Thread(target=worker, args=(srv,), daemon=True).start()
+        
+        self.root.after(100, self.check_update_completion)
+
+    def check_update_completion(self):
+        if self.completed_requests < len(self.server_list):
+            self.root.after(100, self.check_update_completion)
+        else:
+            self.is_updating = False
+            self.schedule_update()
 
     def process_queue(self):
         while not self.queue.empty():
-            self.queue.get()()
+            srv, result = self.queue.get()
+            if srv in self.server_items and result:
+                item_id = self.server_items[srv]
+                self.tree.item(item_id, values=(
+                    result['server'],
+                    result['online'],
+                    srv,
+                    result['map'],
+                    result['platform'],
+                    result['ping']
+                ))
         self.root.after(100, self.process_queue)
 
     def settings_dialog(self):
@@ -323,9 +380,7 @@ class ServerMonitorApp:
             if new_interval < 1:
                 raise ValueError
             self.update_interval = new_interval
-            if self.update_id:
-                self.root.after_cancel(self.update_id)
-            self.update_data()
+            self.schedule_update()
             dialog.destroy()
         except ValueError:
             messagebox.showerror(tr("error"), tr("invalid_number"))
