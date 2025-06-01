@@ -15,10 +15,10 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout,
     QMessageBox, QInputDialog, QSystemTrayIcon, QStyle, QWidget,
     QListWidget, QListWidgetItem, QGroupBox, QSplitter, QAbstractItemView,
-    QHeaderView
+    QHeaderView, QComboBox
 )
 from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal, QCoreApplication, QByteArray, QMimeData
-from PyQt5.QtGui import QIcon, QDrag
+from PyQt5.QtGui import QIcon, QDrag, QPalette, QColor
 import qasync
 
 # Настройка логирования
@@ -34,7 +34,7 @@ logger = logging.getLogger('ServerMonitor')
 
 LOCALE_DIR = Path(__file__).parent / 'locales'
 CONFIG_FILE = Path(__file__).parent / 'config.json'
-DEFAULT_LANGUAGE = 'ru_RU'
+DEFAULT_LANGUAGE = 'en_US'
 DEFAULT_UPDATE_INTERVAL = 30
 DEFAULT_SERVERS = [
     '45.136.205.69:27015'
@@ -48,7 +48,8 @@ class ConfigManager:
             'servers': DEFAULT_SERVERS.copy(),
             'visible_columns': ['server', 'online', 'ip_port', 'map', 'platform', 'ping'],
             'column_widths': {},
-            'window_geometry': None
+            'window_geometry': None,
+            'theme': 'light'  # Добавляем настройку темы
         }
         self.load_config()
 
@@ -74,6 +75,7 @@ class ConfigManager:
                         'servers': loaded_config.get('servers', DEFAULT_SERVERS.copy()),
                         'visible_columns': loaded_config.get('visible_columns', self.config['visible_columns']),
                         'column_widths': loaded_config.get('column_widths', {}),
+                        'theme': loaded_config.get('theme', 'light')  # Загружаем тему
                     })
         except Exception as e:
             logger.error(f"Config load error: {e}")
@@ -140,6 +142,14 @@ class ConfigManager:
     @window_geometry.setter
     def window_geometry(self, value):
         self.config['window_geometry'] = value
+        
+    @property
+    def theme(self):
+        return self.config['theme']
+    
+    @theme.setter
+    def theme(self, value):
+        self.config['theme'] = value
 
 config_manager = ConfigManager()
 
@@ -381,7 +391,227 @@ class ServerMonitorApp(QMainWindow):
         
         if config_manager.window_geometry:
             self.restoreGeometry(config_manager.window_geometry)
+        
+        # Применяем тему при запуске
+        self.apply_theme(config_manager.theme)
     
+    def apply_theme(self, theme_name):
+        """Применяет выбранную тему ко всему приложению"""
+        app = QApplication.instance()
+        if theme_name == 'dark':
+            # Темная тема
+            dark_palette = QPalette()
+            dark_palette.setColor(QPalette.Window, QColor(53, 53, 53))
+            dark_palette.setColor(QPalette.WindowText, Qt.white)
+            dark_palette.setColor(QPalette.Base, QColor(35, 35, 35))
+            dark_palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+            dark_palette.setColor(QPalette.ToolTipBase, QColor(25, 25, 25))
+            dark_palette.setColor(QPalette.ToolTipText, Qt.white)
+            dark_palette.setColor(QPalette.Text, Qt.white)
+            dark_palette.setColor(QPalette.Button, QColor(53, 53, 53))
+            dark_palette.setColor(QPalette.ButtonText, Qt.white)
+            dark_palette.setColor(QPalette.BrightText, Qt.red)
+            dark_palette.setColor(QPalette.Highlight, QColor(142, 45, 197).lighter())
+            dark_palette.setColor(QPalette.HighlightedText, Qt.black)
+            dark_palette.setColor(QPalette.Disabled, QPalette.Text, Qt.darkGray)
+            dark_palette.setColor(QPalette.Disabled, QPalette.ButtonText, Qt.darkGray)
+            
+            app.setPalette(dark_palette)
+            app.setStyleSheet("""
+                /* Общие стили */
+                QWidget {
+                    color: #FFFFFF;
+                }
+                
+                /* Главное окно */
+                QMainWindow, QDialog, QWidget {
+                    background-color: #353535;
+                }
+                
+                /* Дерево серверов */
+                QTreeWidget {
+                    background-color: #353535;
+                    alternate-background-color: #454545;
+                    gridline-color: #555555;
+                }
+                QTreeWidget::item {
+                    color: #FFFFFF;
+                }
+                QTreeWidget::item:selected {
+                    background-color: #6d3d87;
+                    color: #FFFFFF;
+                }
+                QTreeWidget::item:hover {
+                    background-color: #555555;
+                }
+                
+                /* Заголовки колонок */
+                QHeaderView::section {
+                    background-color: #454545;
+                    color: white;
+                    padding: 4px;
+                    border: 1px solid #6c6c6c;
+                }
+                
+                /* Меню и контекстные меню */
+                QMenu {
+                    background-color: #454545;
+                    color: white;
+                    border: 1px solid #6c6c6c;
+                }
+                QMenu::item:selected {
+                    background-color: #6d3d87;
+                }
+                
+                /* Группы */
+                QGroupBox {
+                    border: 1px solid #6c6c6c;
+                    border-radius: 3px;
+                    margin-top: 1ex;
+                    color: white;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    subcontrol-position: top center;
+                    padding: 0 3px;
+                    color: white;
+                }
+                
+                /* Текстовые метки */
+                QLabel {
+                    color: white;
+                }
+                
+                /* Поля ввода */
+                QLineEdit {
+                    background-color: #454545;
+                    color: white;
+                    border: 1px solid #6c6c6c;
+                }
+                
+                /* Кнопки */
+                QPushButton {
+                    background-color: #454545;
+                    color: white;
+                    border: 1px solid #6c6c6c;
+                    padding: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #555555;
+                }
+                QPushButton:pressed {
+                    background-color: #6d3d87;
+                }
+                QPushButton:disabled {
+                    background-color: #353535;
+                    color: #888888;
+                }
+                
+                /* Списки */
+                QListWidget {
+                    background-color: #353535;
+                    color: white;
+                    alternate-background-color: #454545;
+                }
+                QListWidget::item {
+                    color: #FFFFFF;
+                }
+                QListWidget::item:selected {
+                    background-color: #6d3d87;
+                    color: #FFFFFF;
+                }
+                
+                /* Разделители */
+                QSplitter::handle {
+                    background-color: #555555;
+                }
+                
+                /* Выпадающие списки */
+                QComboBox {
+                    background-color: #454545;
+                    color: white;
+                    border: 1px solid #6c6c6c;
+                }
+                QComboBox QAbstractItemView {
+                    background-color: #454545;
+                    color: white;
+                    selection-background-color: #6d3d87;
+                }
+                
+                /* Полосы прокрутки */
+                QScrollBar:vertical {
+                    background: #454545;
+                    width: 12px;
+                }
+                QScrollBar::handle:vertical {
+                    background: #6c6c6c;
+                    min-height: 20px;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+                
+                /* Диалоговые окна */
+                QDialog {
+                    background-color: #353535;
+                }
+                
+                /* Статус бар */
+                QStatusBar {
+                    background-color: #454545;
+                    color: white;
+                }
+                QStatusBar::item {
+                    border: none;
+                }
+                
+                /* Системные диалоги */
+                QMessageBox {
+                    background-color: #353535;
+                }
+                QMessageBox QLabel {
+                    color: white;
+                }
+                QMessageBox QPushButton {
+                    min-width: 80px;
+                }
+                
+                /* Вкладки (если будут добавлены в будущем) */
+                QTabWidget::pane {
+                    border: 1px solid #6c6c6c;
+                    background: #353535;
+                }
+                QTabBar::tab {
+                    background: #454545;
+                    color: white;
+                    padding: 5px;
+                    border: 1px solid #6c6c6c;
+                }
+                QTabBar::tab:selected {
+                    background: #6d3d87;
+                }
+            """)
+        else:
+            # Светлая тема (стандартная)
+            app.setPalette(app.style().standardPalette())
+            app.setStyleSheet("")
+        
+        # Обновляем иконку трея
+        self.update_tray_icon(theme_name)
+        
+        # Принудительно обновляем стиль всех виджетов
+        app.setStyle(app.style())
+    
+    def update_tray_icon(self, theme_name):
+        """Обновляет иконку трея в зависимости от темы"""
+        if self.tray_icon:
+            if theme_name == 'dark':
+                # Для темной темы используем светлую иконку
+                self.tray_icon.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
+            else:
+                # Для светлой темы используем стандартную иконку
+                self.tray_icon.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
+
     def create_column_definitions(self):
         """Создает динамические определения колонок на основе всех известных атрибутов"""
         column_defs = {}
@@ -1231,10 +1461,32 @@ class ServerMonitorApp(QMainWindow):
         
         layout.addLayout(interval_layout)
         
+        # Theme selection
+        theme_layout = QHBoxLayout()
+        theme_label = QLabel(tr("theme"))
+        theme_layout.addWidget(theme_label)
+        
+        theme_combo = QComboBox()
+        theme_combo.addItem(tr("light_theme"), "light")
+        theme_combo.addItem(tr("dark_theme"), "dark")
+        
+        # Устанавливаем текущую тему
+        current_theme = config_manager.theme
+        index = theme_combo.findData(current_theme)
+        if index >= 0:
+            theme_combo.setCurrentIndex(index)
+        
+        theme_layout.addWidget(theme_combo)
+        layout.addLayout(theme_layout)
+        
         # Buttons
         button_layout = QHBoxLayout()
         ok_button = QPushButton(tr("ok"))
-        ok_button.clicked.connect(lambda: self.apply_settings(interval_edit.text(), dialog))
+        ok_button.clicked.connect(lambda: self.apply_settings(
+            interval_edit.text(), 
+            theme_combo.currentData(),
+            dialog
+        ))
         button_layout.addWidget(ok_button)
         
         cancel_button = QPushButton(tr("cancel"))
@@ -1245,14 +1497,21 @@ class ServerMonitorApp(QMainWindow):
         dialog.setLayout(layout)
         dialog.exec_()
     
-    def apply_settings(self, interval, dialog):
+    def apply_settings(self, interval, theme, dialog):
         try:
             new_interval = int(interval)
             if new_interval < 1:
                 raise ValueError
                 
+            # Обновляем интервал
             self.update_interval = new_interval
             config_manager.update_interval = new_interval
+            
+            # Обновляем тему
+            if theme != config_manager.theme:
+                config_manager.theme = theme
+                self.apply_theme(theme)
+            
             config_manager.save_config()
             
             self.update_timer.stop()
@@ -1261,6 +1520,7 @@ class ServerMonitorApp(QMainWindow):
             
             dialog.close()
             logger.info(f"Update interval changed to {new_interval} seconds")
+            logger.info(f"Theme changed to {theme}")
         except ValueError:
             QMessageBox.critical(self, tr("error"), tr("invalid_number"))
     
