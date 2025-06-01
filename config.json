@@ -9,5 +9,44 @@
     "193.31.28.17:27015",
     "193.31.28.17:27035",
     "31.58.91.239:27015"
-  ]
+  ],
+  "visible_columns": [
+    "server",
+    "online",
+    "ip_port",
+    "platform",
+    "map",
+    "ping",
+    "version",
+    "rules_list",
+    "vac"
+  ],
+  "column_widths": {
+    "server": 250,
+    "online": 133,
+    "ip_port": 200,
+    "map": 200,
+    "platform": 250,
+    "ping": 100,
+    "players_count": 80,
+    "bots_count": 60,
+    "vac": 100,
+    "rules_list": 500,
+    "minrate": 80,
+    "maxrate": 80,
+    "version": 166,
+    "maxupdaterate": 0,
+    "minupdaterate": 0,
+    "contact": 120,
+    "region": 80,
+    "maxcmdrate": 100,
+    "players_list": 300,
+    "server_os": 0,
+    "folder": 120,
+    "steam_id": 120,
+    "keywords": 150,
+    "port": 60,
+    "mincmdrate": 0
+  },
+  "window_geometry": "AdnQywADAAD/////////+AAAB4AAAAQaAAADEgAAAJIAAAb5AAAC6QAAAAACAAAAB4AAAAAAAAAAFwAAB38AAAQZ"
 }
