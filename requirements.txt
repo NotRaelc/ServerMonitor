@@ -1,3 +1,4 @@
-a2s-python
-tkinter
+PyQt5 
+python-a2s 
+qasync 
 pyperclip
