@@ -73,5 +73,9 @@
     "enabled": "Enabled",
     "disabled": "Disabled",
     "select_at_least_one_column": "Select at least one column",
-    "warning": "Warning"
+    "warning": "Warning",
+	"theme": "Theme",
+    "light_theme": "Light",
+    "dark_theme": "Dark",
+	"server": "Server"
 }
