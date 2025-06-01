@@ -73,5 +73,9 @@
     "enabled": "Включено",
     "disabled": "Выключено",
     "select_at_least_one_column": "Выберите хотя бы одну колонку",
-    "warning": "Предупреждение"
+    "warning": "Предупреждение",
+	"theme": "Тема",
+    "light_theme": "Светлая",
+    "dark_theme": "Тёмная",
+	"server": "Сервер"
 }
