@@ -48,5 +48,6 @@
     "port": 60,
     "mincmdrate": 0
   },
-  "window_geometry": "AdnQywADAAD/////////+AAAB4AAAAQaAAADEgAAAJIAAAb5AAAC6QAAAAACAAAAB4AAAAAAAAAAFwAAB38AAAQZ"
+  "window_geometry": "AdnQywADAAD/////////+AAAB4AAAAQaAAADEgAAAJIAAAb5AAAC6QAAAAACAAAAB4AAAAAAAAAAFwAAB38AAAQZ",
+  "theme": "light"
 }
